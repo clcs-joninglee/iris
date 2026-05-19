@@ -63,3 +63,36 @@ async def revoke_all_refresh_tokens(user_id: int) -> None: #撤銷某個 user �
     redis = get_redis()
     async for key in redis.scan_iter(f"refresh:{user_id}:*"):
         await redis.delete(key)
+
+_RESET_TTL = 60 * 15  # 15 分鐘
+
+
+async def create_reset_token(user_id: int) -> str:
+    token_id = secrets.token_urlsafe(8)
+    token_secret = secrets.token_urlsafe(32)
+    redis = get_redis()
+    await redis.set(f"reset:{user_id}:{token_id}", _hash(token_secret), ex=_RESET_TTL)
+    return f"{token_id}.{token_secret}"
+
+
+async def verify_reset_token(token: str) -> int | None:
+    try:
+        token_id, token_secret = token.split(".", 1)
+    except ValueError:
+        return None
+    redis = get_redis()
+    async for key in redis.scan_iter(f"reset:*:{token_id}"):
+        stored = await redis.get(key)
+        if stored == _hash(token_secret):
+            return int(key.split(":")[1])
+    return None
+
+
+async def consume_reset_token(token: str) -> None:
+    try:
+        token_id, _ = token.split(".", 1)
+    except ValueError:
+        return
+    redis = get_redis()
+    async for key in redis.scan_iter(f"reset:*:{token_id}"):
+        await redis.delete(key)

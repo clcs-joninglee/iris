@@ -14,6 +14,11 @@ from app.core.ratelimit import check_login_locked, record_login_failure, clear_l
 from app.audit.service import write_audit
 from app.models.user import User
 
+from app.core.tokens import create_reset_token, verify_reset_token, consume_reset_token
+from app.core.security import hash_password
+
+from app.users.schemas import RegisterRequest, UserResponse, LoginRequest, ForgotPasswordRequest, ResetPasswordRequest  
+
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
@@ -118,3 +123,29 @@ async def logout_all(current_user: User = Depends(get_current_user), db: Session
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = crud.get_by_username(db, body.username)
+    if not user:
+        return {"reset_token": None, "detail": "If the account exists, a token has been issued"}
+    token = await create_reset_token(user.id)
+    return {"reset_token": token}
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    user_id = await verify_reset_token(body.reset_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired reset token")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()
+    await consume_reset_token(body.reset_token)
+    await revoke_all_refresh_tokens(user_id)
+    write_audit(db, action="password_reset", result="ok", actor_user_id=user_id)
+    return {"status": "password reset successful"}
