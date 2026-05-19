@@ -7,7 +7,7 @@ from iris.database import get_db
 from iris.config import settings
 from app.users import crud
 from app.users.schemas import RegisterRequest, UserResponse, LoginRequest
-from app.core.security import verify_password, create_access_token
+from app.core.security import verify_password, create_access_token, generate_totp_secret, get_totp_uri, verify_totp
 from app.core.tokens import create_refresh_token, verify_refresh_token, revoke_refresh_token, revoke_all_refresh_tokens
 from app.core.deps import get_current_user
 from app.core.ratelimit import check_login_locked, record_login_failure, clear_login_failures, check_ip_rate_limit
@@ -41,15 +41,45 @@ async def login(request: Request, body: LoginRequest, db: Session = Depends(get_
         write_audit(db, action="login_failure", result="fail", ip_address=ip, extra={"username": body.username})
         raise HTTPException(status_code=401, detail="Invalid credentials")
     await clear_login_failures(body.username)
+    if user.totp_enabled:
+        return {"totp_required": True, "user_id": user.id}
     access = create_access_token(user.id)
     refresh = await create_refresh_token(user.id)
     write_audit(db, action="login_success", result="ok", actor_user_id=user.id, ip_address=ip)
-    return {
-        "access_token": access,
-        "refresh_token": refresh,
-        "token_type": "bearer",
-        "expires_in": settings.access_token_ttl_minutes * 60,
-    }
+    return {"access_token": access, "refresh_token": refresh, "token_type": "bearer", "expires_in": settings.access_token_ttl_minutes * 60}
+
+
+@router.post("/totp/setup")
+def totp_setup(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    secret = generate_totp_secret()
+    current_user.totp_secret = secret
+    db.commit()
+    return {"uri": get_totp_uri(secret, current_user.username)}
+
+
+@router.post("/totp/verify")
+def totp_verify(body: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    code = body.get("code", "")
+    if not current_user.totp_secret or not verify_totp(current_user.totp_secret, code):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+    current_user.totp_enabled = True
+    db.commit()
+    return {"status": "2FA enabled"}
+
+
+@router.post("/totp/login")
+async def totp_login(body: dict, db: Session = Depends(get_db)):
+    user_id = body.get("user_id")
+    code = body.get("code", "")
+    user = db.get(User, user_id)
+    if not user or not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status_code=401, detail="Invalid request")
+    if not verify_totp(user.totp_secret, code):
+        raise HTTPException(status_code=401, detail="Invalid TOTP code")
+    access = create_access_token(user.id)
+    refresh = await create_refresh_token(user.id)
+    write_audit(db, action="login_success", result="ok", actor_user_id=user.id)
+    return {"access_token": access, "refresh_token": refresh, "token_type": "bearer", "expires_in": settings.access_token_ttl_minutes * 60}
 
 
 @router.post("/refresh")
@@ -66,12 +96,7 @@ async def refresh(body: dict, db: Session = Depends(get_db)):
     await revoke_refresh_token(token)
     access = create_access_token(user.id)
     new_refresh = await create_refresh_token(user.id)
-    return {
-        "access_token": access,
-        "refresh_token": new_refresh,
-        "token_type": "bearer",
-        "expires_in": settings.access_token_ttl_minutes * 60,
-    }
+    return {"access_token": access, "refresh_token": new_refresh, "token_type": "bearer", "expires_in": settings.access_token_ttl_minutes * 60}
 
 
 @router.post("/logout")

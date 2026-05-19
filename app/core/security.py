@@ -5,6 +5,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from iris.config import settings
+import pyotp
 
 _ph = PasswordHasher(time_cost=2, memory_cost=65536, parallelism=1)
 
@@ -42,3 +43,17 @@ def create_refresh_token(user_id: int) -> str:
 
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def get_totp_uri(secret: str, username: str) -> str:
+    return pyotp.totp.TOTP(secret).provisioning_uri(
+        name=username,
+        issuer_name="Iris LIMS",
+    )
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    return pyotp.TOTP(secret).verify(code)
