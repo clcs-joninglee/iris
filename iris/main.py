@@ -12,6 +12,7 @@ from app.users.routes import router as users_router
 from app.audit.routes import router as audit_router
 
 from fastapi.security import HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 
 
 @asynccontextmanager #在db裏創立四個角色，app啟動的時候會自動執行這段程式碼
@@ -36,6 +37,14 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
         swagger_ui_parameters={"persistAuthorization": True}
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.exception_handler(SQLAlchemyError)

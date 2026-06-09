@@ -16,16 +16,19 @@ router = APIRouter(
 
 @router.get(
     "/search",
-    response_model=list[schemas.IrisResponse],
+    response_model=schemas.IrisListResponse,
     summary="搜尋 Iris 資料",
     description="根據品種或最小花瓣長度篩選資料",
 )
 def search_iris(
-    species: str | None = Query(None, description="品種名稱，例如 Iris-setosa"),
+    species: str | None = Query(None, description="品種名稱"),
     min_petal_length: float | None = Query(None, ge=0, description="花瓣長度下限（cm）"),
+    limit: int = Query(10, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return crud.iris.search(db, species=species, min_petal_length=min_petal_length)
+    items, total = crud.iris.search(db, species=species, min_petal_length=min_petal_length, limit=limit, offset=offset)
+    return schemas.IrisListResponse(data=items, total=total, limit=limit, offset=offset)
 
 
 @router.get(
@@ -57,6 +60,7 @@ def list_iris(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     items, total = crud.iris.get_all(db, limit=limit, offset=offset)
     return schemas.IrisListResponse(data=items, total=total, limit=limit, offset=offset)

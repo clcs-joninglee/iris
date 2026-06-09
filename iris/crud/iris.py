@@ -19,13 +19,15 @@ def get_by_id(db: Session, iris_id: int):
     return db.get(Iris, iris_id)
 
 
-def search(db: Session, species=None, min_petal_length=None):
+def search(db: Session, species=None, min_petal_length=None, limit: int = 10, offset: int = 0):
     q = select(Iris).order_by(Iris.Id)
     if species is not None:
         q = q.where(Iris.Species == species)
     if min_petal_length is not None:
         q = q.where(Iris.PetalLengthCm >= min_petal_length)
-    return list(db.execute(q).scalars().all())
+    total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
+    items = list(db.execute(q.limit(limit).offset(offset)).scalars().all())
+    return items, total
 
 
 def analytics_stats(db: Session):
