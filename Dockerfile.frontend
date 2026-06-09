@@ -1,0 +1,20 @@
+#stage 1 - build 把 .vue 檔案編譯成靜態的 HTML/CSS/JS ,產出放在 /app/dist 資料夾
+FROM node:alpine AS builder
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+
+COPY frontend/ .
+RUN npm run build
+
+#stage 2 - serve 只從 Stage 1 把 /app/dist 的靜態檔案拿過來, 用 nginx 把這些檔案 serve 給瀏覽器
+
+FROM nginx:alpine
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
